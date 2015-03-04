@@ -1,0 +1,9 @@
+{
+    "indent"        : 4,
+    "quotmark"      : "single",
+    "curly"         : true,
+    "eqeqeq"        : true,
+    "node"          : true,
+    "strict"        : true,
+    "unused"        : true,
+}

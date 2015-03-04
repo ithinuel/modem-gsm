@@ -16,7 +16,19 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 'use strict';
 
-module.exports = {
-    Modem: require('./modem.js'),
-    Pdu: require('./pdu.js')
+var Pdu = {};
+
+Pdu.encode = function pduEncode(msg) {
+    console.log(msg);
+
+    // receiver
+    // codingscheme
+    // statusReport
+    // validityPeriod: {
+    //      type: relative/absolute
+    //      end: date/period
+    // }
+    //
 };
+
+module.exports = Pdu;

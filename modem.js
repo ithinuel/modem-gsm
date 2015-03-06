@@ -42,7 +42,7 @@ function Modem(opts) {
             openImmediately: false
         }, false),
         m_serialopen = Bluebird.promisify(m_serialPort.open, m_serialPort),
-        m_serialclose = Bluebird.promisify(m_serialPort.close, m_serialPort),
+        m_serialflush = Bluebird.promisify(m_serialPort.flush, m_serialPort),
         m_serialwrite = Bluebird.promisify(m_serialPort.write, m_serialPort),
         m_logger = intel.getLogger(opts.port);
 
@@ -59,8 +59,8 @@ function Modem(opts) {
         throw new Error('Port is not defined');
     }
 
-    m_serialPort.on('data', onData.bind(this));
-    m_serialPort.on('error', onError.bind(this));
+    m_serialPort.on('data', onData);
+    m_serialPort.on('error', onError);
 
     this.connect = function connect() {
         var that = this;
@@ -76,7 +76,11 @@ function Modem(opts) {
     };
     
     this.disconnect = function disconnect() {
-        return m_serialclose().timeout(2000).then(function () {
+        return m_serialflush().then(function () {
+            return new Bluebird(function (resolve) {
+                m_serialPort.close(resolve);
+            });
+        }).timeout(2000).then(function () {
             m_logger.info('disconnected');
         });
     };
@@ -97,13 +101,13 @@ function Modem(opts) {
     this.sendSms = function sendSms(msg) {
         var that = this;
         var pdus = Pdu.encode(msg);
-        var prev = Bluebird.resolve();
+        var last = Bluebird.resolve();
         _.forEach(pdus, function (pdu) {
-            prev = prev.then(function () {
+            last = last.then(function () {
                 return that.sendCommand('AT+CMGS=' + (pdu.length/2 - 1), pdu).timeout(60000);
             });
         });
-        return prev;
+        return last;
     };
 
     function sendNext() {
@@ -114,7 +118,7 @@ function Modem(opts) {
     }
 
     function writeData(data) {
-        m_logger.debug('%s ---->', m_serialPort.path, data.toString());
+        m_logger.debug('%s ---->', m_serialPort.path, JSON.stringify(data));
         return m_serialwrite(data);
     }
 
@@ -200,7 +204,7 @@ function Modem(opts) {
     }
 
     function onError(msg) {
-        m_logger.error(msg);
+        m_logger.log(msg);
     }
 }
 

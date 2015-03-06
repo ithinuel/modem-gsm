@@ -20,7 +20,7 @@ var serialport = require('serialport'),
     Bluebird = require('bluebird'),
     intel = require('intel'),
     _ = require('lodash'),
-    PDU = require('pdu'),
+    Pdu = require('./pdu.js'),
     SerialPort = serialport.SerialPort;
 
 var terminalMessage = [
@@ -42,6 +42,7 @@ function Modem(opts) {
             openImmediately: false
         }, false),
         m_serialopen = Bluebird.promisify(m_serialPort.open, m_serialPort),
+        m_serialclose = Bluebird.promisify(m_serialPort.close, m_serialPort),
         m_serialwrite = Bluebird.promisify(m_serialPort.write, m_serialPort),
         m_logger = intel.getLogger(opts.port);
 
@@ -68,9 +69,15 @@ function Modem(opts) {
             return Bluebird.all([
                 that.setEchoMode(false),
                 that.setTextMode(false),
-                that.sendCommand('AT+CNMI=2,2,2,1,0'),
-                that.sendCommand('AT+CMEE=2')
+                that.sendCommand('AT+CNMI=2,2,2,1,0').timeout(500),
+                that.sendCommand('AT+CMEE=2').timeout(500)
             ]);
+        });
+    };
+    
+    this.disconnect = function disconnect() {
+        return m_serialclose().timeout(2000).then(function () {
+            m_logger.info('disconnected');
         });
     };
 
@@ -82,18 +89,18 @@ function Modem(opts) {
     };
 
     this.setEchoMode = function setEchoMode(enEcho) {
-        return this.sendCommand('ATE' + (enEcho?'1':'0'));
+        return this.sendCommand('ATE' + (enEcho?'1':'0')).timeout(500);
     };
     this.setTextMode = function setTextMode(enText) {
-        return this.sendCommand('AT+CMGF=' + (enText?'1':'0'));
+        return this.sendCommand('AT+CMGF=' + (enText?'1':'0')).timeout(500);
     };
     this.sendSms = function sendSms(msg) {
         var that = this;
-        var pdus = PDU.generate(msg);
+        var pdus = Pdu.encode(msg);
         var prev = Bluebird.resolve();
         _.forEach(pdus, function (pdu) {
             prev = prev.then(function () {
-                return that.sendCommand('AT+CMGS=' + (pdu.length/2 - 1), pdu);
+                return that.sendCommand('AT+CMGS=' + (pdu.length/2 - 1), pdu).timeout(60000);
             });
         });
         return prev;
@@ -112,8 +119,6 @@ function Modem(opts) {
     }
 
     function onData(data) {
-        var cmd;
-
         m_logger.debug('%s <----', m_serialPort.path, data.toString().trim());
         /* enqueue new data */
         if ((data.length + m_rxPtr) > m_rxBuffer.length) {
@@ -132,7 +137,7 @@ function Modem(opts) {
 
         if (str.indexOf('>') !== -1) {
             if (m_cmdQueue.length > 0) {
-                cmd = m_cmdQueue[0];
+                var cmd = m_cmdQueue[0];
                 if (!cmd.payload_sent) {
                     cmd.payload_sent = true;
                     writeData(cmd.payload + String.fromCharCode(26));
@@ -150,8 +155,17 @@ function Modem(opts) {
         if (lines.length === 0) { return; }
 
         /* filter out unsolicited message */
-        for (var i = 0; i < lines.length; i++) {
-
+        var i = 0;
+        while (i < lines.length) {
+            var line = lines[i];
+            if (line[0] === '+') {
+                if (line.indexOf('ERROR') !== -1) {
+                    lines.splice(i, 1);
+                    complete(line, null);
+                    continue;
+                }
+            }
+            i++;
         }
 
         var b = new Buffer(lines.join('\n'));
@@ -160,22 +174,29 @@ function Modem(opts) {
 
         /* check for termination message */
         if (m_cmdQueue.length > 0) {
-            cmd = m_cmdQueue[0];
             var lastLine = lines[lines.length - 1];
-            var finished = _.indexOf(terminalMessage, lastLine) !== -1 ||
-                           b.toString().indexOf(cmd.expect) !== -1;
+            var finished = _.indexOf(terminalMessage, lastLine) !== -1;
             if (finished) {
-                /* pop cmd from the queue */
-                m_cmdQueue.splice(0, 1);
                 var resp = b.toString();
-                m_logger.debug(cmd.cmd + ' resolved: ' + resp);
-                cmd.resolve(resp);
-
                 m_rxPtr = 0;
-                m_busy = false;
-                sendNext();
+                complete(null, resp);
             }
         }
+    }
+    
+    function complete(err, resp) {
+        var cmd = m_cmdQueue[0];
+        m_cmdQueue.splice(0, 1);
+        m_busy = false;
+        
+        if (err) {
+            m_logger.debug(' rejected: ' + err);
+            cmd.reject(new Error(err));
+        } else {
+            m_logger.debug(cmd.cmd + ' resolved: ' + resp);
+            cmd.resolve(resp);
+        }
+        sendNext();
     }
 
     function onError(msg) {

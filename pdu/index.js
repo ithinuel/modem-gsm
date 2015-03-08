@@ -17,6 +17,6 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 'use strict';
 
 module.exports = {
-    Modem: require('./modem.js'),
-    Pdu: require('./pdu')
+    encode: require('./encode.js'),
+    decode: require('./decode.js')
 };

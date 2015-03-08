@@ -20,13 +20,10 @@ var serialport = require('serialport'),
     Bluebird = require('bluebird'),
     intel = require('intel'),
     _ = require('lodash'),
-    Pdu = require('./pdu.js'),
+    util = require('util'),
+    EventEmitter = require('events').EventEmitter,
+    Pdu = require('./pdu'),
     SerialPort = serialport.SerialPort;
-
-var terminalMessage = [
-    'ERROR',
-    'OK'
-];
 
 function HayesCommand(cmd, payload, resolve, reject) {
     this.cmd = cmd;
@@ -37,6 +34,7 @@ function HayesCommand(cmd, payload, resolve, reject) {
 }
 
 function Modem(opts) {
+    var that = this;
     var m_serialPort = new SerialPort(opts.port, {
             baudrate: opts.baudrate || 115200,
             openImmediately: false
@@ -63,7 +61,6 @@ function Modem(opts) {
     m_serialPort.on('error', onError);
 
     this.connect = function connect() {
-        var that = this;
         return m_serialopen().then(function () {
             m_logger.info('connected');
             return Bluebird.all([
@@ -101,6 +98,7 @@ function Modem(opts) {
     this.sendSms = function sendSms(msg) {
         var that = this;
         var pdus = Pdu.encode(msg);
+        m_logger.debug(JSON.stringify(pdus));
         var last = Bluebird.resolve();
         _.forEach(pdus, function (pdu) {
             last = last.then(function () {
@@ -135,57 +133,71 @@ function Modem(opts) {
         var str = m_rxBuffer.slice(0, m_rxPtr).toString();
 
         /* if last char is not lf and buffer does not contain > then nothing else to do */
-        if (m_rxBuffer[m_rxPtr-1] !== 10 && str.indexOf('>') === -1) {
+        if (str.charAt(str.length - 1) !== '\n' && str.indexOf('>') === -1) {
             return;
-        }
-
-        if (str.indexOf('>') !== -1) {
-            if (m_cmdQueue.length > 0) {
-                var cmd = m_cmdQueue[0];
-                if (!cmd.payload_sent) {
-                    cmd.payload_sent = true;
-                    writeData(cmd.payload + String.fromCharCode(26));
-                    return;
-                }
-            } else {
-                m_logger.info('no payload, cancelling');
-                writeData(String.fromCharCode(24));
-            }
         }
 
         /* split lines */
         var lines = str.split('\r\n');
         lines = _.compact(lines);
         if (lines.length === 0) { return; }
-
+        
         /* filter out unsolicited message */
-        var i = 0;
-        while (i < lines.length) {
-            var line = lines[i];
-            if (line[0] === '+') {
-                if (line.indexOf('ERROR') !== -1) {
-                    lines.splice(i, 1);
-                    complete(line, null);
-                    continue;
+        var prev_len;        
+        
+        do {
+            do {
+                prev_len = lines.length;
+                if (lines[0].match(/^\+(CMT|CDS): /)) {
+                    if (lines.length > 1) {
+                        var ls = lines.splice(0, 2);
+                        var us = Pdu.decode(ls[1]);
+                        that.emit('status-report', us);
+                    }
                 }
-            }
-            i++;
-        }
-
+            } while (lines.length && prev_len !== lines.length);
+            do {
+                prev_len = lines.length;
+                _.forEach(lines, findResponse);
+            } while (lines.length && lines.length !== prev_len);
+        } while (lines.length && lines.length !== prev_len);
+        
         var b = new Buffer(lines.join('\n'));
         b.copy(m_rxBuffer);
         m_rxPtr = b.length;
+    }
+    
+    function findResponse(line, i, lines) {
+        var ls;
 
-        /* check for termination message */
-        if (m_cmdQueue.length > 0) {
-            var lastLine = lines[lines.length - 1];
-            var finished = _.indexOf(terminalMessage, lastLine) !== -1;
-            if (finished) {
-                var resp = b.toString();
-                m_rxPtr = 0;
-                complete(null, resp);
-            }
+        if (line === '> ') {
+            lines.splice(i, i+1);
+            processCmdPayload();
+        } else if (line === 'OK') {
+            ls = lines.splice(0, i+1);
+            complete(null, ls.join('\n'));
+            return false;
+        } else if (line === 'ERROR') {
+            ls = lines.splice(0, i+1);
+            complete(ls.join('\n'));
+            return false;
         }
+    }
+    
+    function processCmdPayload() {
+        if (m_cmdQueue.length > 0) {
+            var cmd = m_cmdQueue[0];
+            if (!cmd.payload_sent) {
+                cmd.payload_sent = true;
+                writeData(cmd.payload + String.fromCharCode(26));
+                return;
+            } else {
+                m_logger.info('payload already sent, cancelling');
+            }
+        } else {
+            m_logger.info('no payload, cancelling');
+        }
+        writeData(String.fromCharCode(24));
     }
     
     function complete(err, resp) {
@@ -208,5 +220,6 @@ function Modem(opts) {
     }
 }
 
-//Modem.prototype.
+util.inherits(Modem, EventEmitter);
+
 module.exports = Modem;

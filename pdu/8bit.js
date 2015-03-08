@@ -16,7 +16,25 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 'use strict';
 
+var toHexByte = require('../utils.js').toHexByte;
+
+function boundaries8bit(text) {
+    if (text.length > 140) {
+        return {max: 134, cnt: Math.ceil(text.length/134)};
+    }
+    return {max: 140, cnt: 1};
+}
+
+function encodeUserDataAs8bit(text, udh) {
+    var ud = udh || '';
+    for (var i = 0; i < text.length; i++) {
+        ud += toHexByte(text.charCode(i));
+    }
+    return toHexByte(ud.length/2) + ud;
+}
+
 module.exports = {
-    Modem: require('./modem.js'),
-    Pdu: require('./pdu')
+    boundaries: boundaries8bit,
+    dcs: '04',
+    encode: encodeUserDataAs8bit
 };

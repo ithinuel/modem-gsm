@@ -33,8 +33,13 @@ function encodeUserDataAs16bit(text, udh) {
     return toHexByte(ud.length/2) + ud;
 }
 
+function decodeUserDataAs16bit() {
+    return {};
+}
+
 module.exports = {
     boundaries: boundaries16bit,
     dcs: '08',
+    decode: decodeUserDataAs16bit,
     encode: encodeUserDataAs16bit
 };

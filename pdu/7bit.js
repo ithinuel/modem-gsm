@@ -76,9 +76,15 @@ function encodeUserDataAs7bit(text, udh) {
     return toHexByte(len) + ud;
 }
 
+function decodeUserDataAs7bit(udl, ud) {
+    console.log(udl, ud);
+    return {};
+}
+
 module.exports = {
     alpha: sevenBitAlpha,
     boundaries: boundaries7bit,
     dcs: '00',
+    decode: decodeUserDataAs7bit,
     encode: encodeUserDataAs7bit
 };

@@ -16,9 +16,13 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 'use strict';
 
-var moment = require('moment');
-
-var TPStatus = {
+var moment = require('moment'),
+    _ = require('lodash'),
+    encoders = {
+    '7bit': require('./7bit.js'),
+    '8bit': require('./8bit.js'),
+    '16bit': require('./16bit.js')
+},  TPStatus = {
     '00': 'received',
     '01': 'forwarded but unable to confirm delivery',
     '02': 'replaced by SC',
@@ -105,6 +109,7 @@ function decode(pdu, direction) {
     var head = parseByte(state);
     var mti = head & 0x03;
     if (direction === 'MS->SC') {
+            throw new Error ('not implemented');
     } else {
         if (mti === 2) {
             msg.mti = 'SMS-STATUS-REPORT';
@@ -121,7 +126,23 @@ function decode(pdu, direction) {
                 msg.status = 'SC specific value: ' + st;
             }
         } else if (mti === 1) {
+            throw new Error ('not implemented');
         } else if (mti === 0) {
+            msg.mti = 'SMS-DELIVER';
+            // MMS, SRI UDHI RP
+            msg.originatingAddress = decodeAddress(state);
+            //skip TP-PID
+            readByte(state);
+            var dcs = readByte(state);
+            msg.timestamp = parseTimestamp(state);
+            var encoding = _.findKey(encoders, 'dcs', dcs);
+            if (!encoding) {
+                throw new Error('Unsupported encoding');
+            }
+            var udl = parseByte(state);
+            var ud = encoders[encoding].decode(udl, state.pdu.slice(state.cursor));
+            msg.udh = ud.head;
+            msg.text = ud.text;
         } else {
             throw new Error ('invalid MTI');
         }

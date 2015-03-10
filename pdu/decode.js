@@ -18,6 +18,8 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 var moment = require('moment'),
     _ = require('lodash'),
+    readByte = require('../utils.js').readByte,
+    parseByte = require('../utils.js').parseByte,
     encoders = {
     '7bit': require('./7bit.js'),
     '8bit': require('./8bit.js'),
@@ -43,16 +45,6 @@ var moment = require('moment'),
     '48': 'SM deleted by SC administration',
     '49': 'SM does not exist'
 };
-
-function readByte(state) {
-    var val = state.pdu.slice(state.cursor, state.cursor+2);
-    state.cursor += 2;
-    return val;
-}
-
-function parseByte(state) {
-    return parseInt(readByte(state), 16);
-}
 
 function parseTimestamp(state) {
     var year = readByte(state);
@@ -130,19 +122,46 @@ function decode(pdu, direction) {
         } else if (mti === 0) {
             msg.mti = 'SMS-DELIVER';
             // MMS, SRI UDHI RP
+            msg.moreMessageToSend = !!(head & 0x04);
+            msg.statusReportIndication = !!(head & 0x20);
+            var userDataHeader = !!(head & 0x40);
+            msg.replyPath = !!(head & 0x80);
             msg.originatingAddress = decodeAddress(state);
             //skip TP-PID
             readByte(state);
             var dcs = readByte(state);
             msg.timestamp = parseTimestamp(state);
+            var udl = parseByte(state);
+            
+            var offset = 0;
+            var udh;
+            if (userDataHeader) {
+                // parse UDH
+                udh = {};
+                var udhl = parseByte(state);
+                var idx = 0;
+                while (idx < udhl) {
+                    var udet = parseByte(state);
+                    var udel = parseByte(state);
+                    if (udet === 0) {
+                        udh.concatenatedMessage ={
+                            ref: parseByte(state),
+                            max: parseByte(state),
+                            idx: parseByte(state)
+                        };
+                    }
+                    idx += 2 + udel;
+                }
+                
+                offset = 1 + udhl;
+            }
+            
             var encoding = _.findKey(encoders, 'dcs', dcs);
             if (!encoding) {
                 throw new Error('Unsupported encoding');
             }
-            var udl = parseByte(state);
-            var ud = encoders[encoding].decode(udl, state.pdu.slice(state.cursor));
-            msg.udh = ud.head;
-            msg.text = ud.text;
+            msg.udh = udh;
+            msg.text = encoders[encoding].decode(offset, udl, state);
         } else {
             throw new Error ('invalid MTI');
         }

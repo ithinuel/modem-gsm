@@ -16,7 +16,8 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 'use strict';
 
-var toHexByte = require('../utils.js').toHexByte;
+var toHexByte = require('../utils.js').toHexByte,
+    readByte = require('../utils.js').readByte;
 
 function boundaries8bit(text) {
     if (text.length > 140) {
@@ -33,8 +34,15 @@ function encodeUserDataAs8bit(text, udh) {
     return toHexByte(ud.length/2) + ud;
 }
 
-function decodeUserDataAs8bit() {
-    return {};
+function decodeUserDataAs8bit(offset, udl, state) {
+    var text = '';
+    var idx = offset;
+    while (idx < udl) {
+        text += String.fromCharCode('0x' + readByte(state));
+        idx += 1;
+    }
+    
+    return text;
 }
 
 module.exports = {

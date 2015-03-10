@@ -33,8 +33,17 @@ function encodeUserDataAs16bit(text, udh) {
     return toHexByte(ud.length/2) + ud;
 }
 
-function decodeUserDataAs16bit() {
-    return {};
+function decodeUserDataAs16bit(offset, udl, state) {
+    var text = '';
+    var idx = offset;
+    while (idx < udl) {
+        var wc = state.pdu.slice(state.cursor, state.cursor + 4);
+        state.cursor += 4;
+        text += String.fromCharCode('0x' + wc);
+        idx += 2;
+    }
+    
+    return text;
 }
 
 module.exports = {

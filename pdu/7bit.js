@@ -16,7 +16,8 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 'use strict';
 
-var toHexByte = require('../utils.js').toHexByte;
+var toHexByte = require('../utils.js').toHexByte,
+    parseByte = require('../utils.js').parseByte;
 
 var sevenBitAlpha = [
     '@', '£', '$', '¥', 'è', 'é', 'ù', 'ì', 'ò', 'Ç',
@@ -46,9 +47,11 @@ function encodeUserDataAs7bit(text, udh) {
     var i = 0;
     var shift = 0;
     if (ud.length) {
-        shift = (ud.length+1) % 7;
+        shift = (ud.length+1);
+        if (shift === 7) { shift = 0; }
         ud += toHexByte(text.charCodeAt(i)<<(7-shift));
-        i++; shift = (shift+1)%7;
+        i++; shift++;
+        if (shift === 7) { shift = 0; }
     }
     
     while (i < text.length) {
@@ -66,7 +69,8 @@ function encodeUserDataAs7bit(text, udh) {
             i++;
         }
         
-        shift = (shift+1)%7;
+        shift++;
+        if (shift === 7) { shift = 0; }
         i++;
     }
     var len = text.length;
@@ -76,9 +80,32 @@ function encodeUserDataAs7bit(text, udh) {
     return toHexByte(len) + ud;
 }
 
-function decodeUserDataAs7bit(udl, ud) {
-    console.log(udl, ud);
-    return {};
+function decodeUserDataAs7bit(offset, udl, state) {
+    var text = '';
+    
+    var bitInStash = offset;
+    var stash = 0;
+    var idx = 0;
+    
+    if (offset) {
+        stash = parseByte(state) >> (7-offset);
+        bitInStash = 8 - (7-offset);
+        idx = offset + 1;
+    }
+    while (idx < udl) {
+        if (bitInStash < 7) {
+            var newb = parseByte(state);
+            stash |= newb << bitInStash;
+            bitInStash += 8;
+        }
+        var septet = stash&0x7F;
+        text += sevenBitAlpha[septet];
+        stash = stash >> 7;
+        bitInStash -= 7;
+        idx++;
+    }
+    
+    return text;
 }
 
 module.exports = {

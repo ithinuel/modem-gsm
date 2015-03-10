@@ -42,7 +42,8 @@ function Modem(opts) {
         m_serialopen = Bluebird.promisify(m_serialPort.open, m_serialPort),
         m_serialflush = Bluebird.promisify(m_serialPort.flush, m_serialPort),
         m_serialwrite = Bluebird.promisify(m_serialPort.write, m_serialPort),
-        m_logger = intel.getLogger(opts.port);
+        m_logger = intel.getLogger(opts.port),
+        m_pending = [];
 
     if (!opts.debug) {
         m_logger.setLevel(intel.INFO);
@@ -151,8 +152,18 @@ function Modem(opts) {
                 if (lines[0].match(/^\+(CMT|CDS): /)) {
                     if (lines.length > 1) {
                         var ls = lines.splice(0, 2);
-                        var us = Pdu.decode(ls[1]);
-                        that.emit('status-report', us);
+                        
+                        try {
+                            var us = Pdu.decode(ls[1]);
+                            m_logger.debug(us);
+                            if (us.mti === 'SMS-STATUS-REPORT') {
+                                that.emit('status-report', us);
+                            } else if (us.mti === 'SMS-DELIVER') {
+                                processStatusReport(us);
+                            }
+                        } catch (err) {
+                            m_logger.error(err);
+                        }
                     }
                 }
             } while (lines.length && prev_len !== lines.length);
@@ -165,6 +176,39 @@ function Modem(opts) {
         var b = new Buffer(lines.join('\n'));
         b.copy(m_rxBuffer);
         m_rxPtr = b.length;
+    }
+    
+    function processStatusReport(us) {
+        var out = null;
+        if (us.udh && us.udh.concatenatedMessage) {
+            if (m_pending.length !== 0) {
+                if (m_pending[0].udh.concatenatedMessage.ref !==
+                    us.udh.concatenatedMessage.ref) {
+                    m_pending.length = 0;
+                    m_logger.info('cleaning buffer');
+                }
+            }
+            m_pending.push(us);
+            m_pending = _.sortBy(m_pending, function (m) {
+                return m.udh.concatenatedMessage.idx;
+            });
+            m_logger.debug(m_pending);
+            if (m_pending.length === us.udh.concatenatedMessage.max) {
+                _.forEach(m_pending, function (m) {
+                    if (out === null) {
+                        out = m;
+                    } else {
+                        out.text += m.text;
+                    }
+                });
+                delete out.udh;
+            }
+        } else {
+            out = us;
+        }
+        if (out) {
+            that.emit('deliver', out);
+        }
     }
     
     function findResponse(line, i, lines) {

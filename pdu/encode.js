@@ -16,12 +16,16 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 'use strict';
 
-var toHexByte = require('../utils.js').toHexByte;
+var moment = require('moment'),
+    toHexByte = require('../utils.js').toHexByte;
 
 var TPSRR  = 32,
-    TPUDHI = 64;
+    TPUDHI = 64,
+    SMS_SUBMIT = 1,
+    HOUR = 60,
+    DAY = 24 * HOUR,
+    WEEK = 7 * DAY;
 
-var SMS_SUBMIT = 1;
 
 var encoders = {
     '7bit': require('./7bit.js'),
@@ -30,25 +34,33 @@ var encoders = {
 };
 
 function encodeAddress(addr, isSC) {
-    var pdu = '';
     if (!addr) {
         return '00';
     }
     
-    if (isSC) {
-        pdu += toHexByte(2 + Math.ceil(addr.length/2));
-    } else {
-        pdu += toHexByte(addr.length);
+    var pdu = '',
+        addr_len = addr.length,
+        toanp = '81',
+        idx = 0;
+    if (addr[0] === '+') {
+        toanp = '91';
+        addr_len--; idx++;
     }
-    pdu += '91';
+    if (isSC) {
+        pdu += toHexByte(2 + Math.ceil(addr_len/2));
+    } else {
+        pdu += toHexByte(addr_len);
+    }
     
-    for (var i = 0; i < addr.length; i+=2) {
-        if (i+1 === addr.length) {
+    pdu += toanp;
+    while (idx < addr.length) {
+        if (idx+1 === addr.length) {
             pdu += 'F';
         } else {
-            pdu += addr.charAt(i+1);
+            pdu += addr.charAt(idx+1);
         }
-        pdu += addr.charAt(i);
+        pdu += addr.charAt(idx);
+        idx += 2;
     }
     
     return pdu;
@@ -60,7 +72,7 @@ function detectDCS(text) {
            encoders['7bit'].alpha.indexOf(text[i]) !== -1) {
         i++;
     }
-    console.log(i);
+    
     if (i === text.length) {
         return '7bit';
     } else if (text.charCodeAt(i) > 255) {
@@ -91,7 +103,11 @@ function generatePdu(text, opts) {
     pdu += '00' + opts.encoder.dcs;
     // TP-VP
     if (opts.hasOwnProperty('vp')) {
-        pdu += toHexByte(opts.vp);
+        if (opts.vp.format === 0x10) {
+            pdu += toHexByte(opts.vp.value);
+        } else if (opts.vp.format === 0x18) {
+            pdu += opts.vp.value;
+        }
     }
     
     return pdu + opts.encoder.encode(text, udh);
@@ -104,9 +120,29 @@ function encode(msg) {
     var encoder = encoders[encoding];
     var bounadies = encoder.boundaries(msg.text);
     var vp = {
-        format: 0x10,
-        value: 0
+        format: 0x00
     };
+    
+    if (msg.expiresIn) {
+        if (typeof msg.expiresIn === 'number') {
+            vp.format = 0x10;
+            if (msg.expiresIn <= 12*HOUR) {
+                vp.value = Math.ceil(msg.expiresIn / 5) - 1;
+            } else if (msg.expiresIn <= DAY) {
+                vp.value = 143 + Math.ceil((msg.expiresIn - 12*HOUR) / 30);
+            } else if (msg.expiresIn <= WEEK) {
+                vp.value = 166 + Math.ceil(msg.expiresIn / DAY);
+            } else {
+                vp.value = 192 + Math.ceil(msg.expiresIn / WEEK);
+            }
+        }
+    } else if (msg.expiresAt) {
+        var date = moment(msg.expiresAt);
+        var d = date.utc().format('YYMMDDHHmmss');
+        vp.format = 0x18;
+        vp.value = d[1] + d[0] + d[3] + d[2] + d[5] + d[4] +
+            d[7] + d[6] + d[9] + d[8] + d[11] + d[10] + '00';
+    }
     
     /*
     extract/generate meta information
@@ -120,7 +156,7 @@ function encode(msg) {
         (msg.statusReport ? TPSRR : 0) |
         vp.format |
         ((bounadies.cnt !== 1) ? TPUDHI : 0),
-        vp: vp.value,
+        vp: vp,
         encoder: encoder
     };
     

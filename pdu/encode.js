@@ -26,7 +26,6 @@ var TPSRR  = 32,
     DAY = 24 * HOUR,
     WEEK = 7 * DAY;
 
-
 var encoders = {
     '7bit': require('./7bit.js'),
     '8bit': require('./8bit.js'),

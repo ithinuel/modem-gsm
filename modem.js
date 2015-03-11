@@ -25,6 +25,15 @@ var serialport = require('serialport'),
     Pdu = require('./pdu'),
     SerialPort = serialport.SerialPort;
 
+var networkStat = {
+    '0': 'Not registered',
+    '1': 'Registered, home network',
+    '2': 'Not registered, searching...',
+    '3': 'Registration denied',
+    '4': 'Unknown',
+    '5': 'Registered, roaming'
+};
+
 function HayesCommand(cmd, payload, resolve, reject) {
     this.cmd = cmd;
     this.payload = payload;
@@ -94,8 +103,27 @@ function Modem(opts) {
         return this.sendCommand('ATE' + (enEcho?'1':'0')).timeout(500);
     };
     this.setTextMode = function setTextMode(enText) {
-        return this.sendCommand('AT+CMGF=' + (enText?'1':'0')).timeout(500);
+        return this.sendCommand('AT+CMGF=' + (enText?'1':'0')).timeout(500).then(function () {
+        });
     };
+    this.getCSQ = function getCSQ() {
+        return this.sendCommand('AT+CSQ').timeout(500).then(function (resp) {
+            var m = resp.match(/\+CSQ: (\d+),(\d+)\nOK/);
+            return {rssi: m[1], ber: m[2]};
+        });
+    };
+    this.getCREG = function getCREG() {
+        return this.sendCommand('AT+CREG?').timeout(500).then(function (resp) {
+            var m = resp.match(/\+CREG: (\d+),(\d+)(,(\d+),(\d+))?\nOK/);
+            var result = { state: networkStat[m[2]] };
+            if (m[4] && m[5]) {
+                result.lac = m[4];
+                result.ci = m[5];
+            }
+            return result;
+        });
+    };
+    
     this.sendSms = function sendSms(msg) {
         var that = this;
         var pdus = Pdu.encode(msg);
@@ -221,7 +249,7 @@ function Modem(opts) {
             ls = lines.splice(0, i+1);
             complete(null, ls.join('\n'));
             return false;
-        } else if (line === 'ERROR') {
+        } else if (line === 'ERROR' || line.indexOf('+CMS ERROR: ') !== -1 || line.indexOf('+CME ERROR: ') !== -1) {
             ls = lines.splice(0, i+1);
             complete(ls.join('\n'));
             return false;
